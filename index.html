@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SWP07 - 高雄市 YouBike 2.0 即時地圖資訊</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0fdf4',
+              500: '#22c55e',
+              600: '#16a34a',
+              700: '#15803d'
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <!-- Leaflet MarkerCluster CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap');
+    body {
+      font-family: 'Inter', 'Noto Sans TC', sans-serif;
+    }
+    #map {
+      height: 100vh;
+      width: 100vw;
+      z-index: 10;
+    }
+    /* 自訂 Leaflet 彈窗美化 */
+    .leaflet-popup-content-wrapper {
+      padding: 0;
+      border-radius: 1rem;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+      overflow: hidden;
+      border: 1px solid rgba(229, 231, 235, 0.8);
+    }
+    .leaflet-popup-content {
+      margin: 0 !important;
+      line-height: 1.5;
+    }
+    .leaflet-popup-tip {
+      background: white;
+    }
+    /* 自訂 Marker 氣泡樣式 */
+    .custom-bike-marker {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 9999px;
+      font-weight: 700;
+      color: white;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
+      border: 2px solid white;
+      transition: transform 0.15s ease-in-out;
+    }
+    .custom-bike-marker:hover {
+      transform: scale(1.15);
+      z-index: 9999 !important;
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 antialiased overflow-hidden select-none">
+
+  <div class="relative w-screen h-screen">
+    <!-- 地圖主容器 -->
+    <div id="map"></div>
+
+    <!-- 頂部懸浮控制列與品牌資訊 -->
+    <header class="absolute top-4 left-4 right-4 md:right-auto md:w-96 z-20 pointer-events-auto">
+      <div class="bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200/80 p-4 transition-all">
+        <!-- 標題與即時更新按鈕 -->
+        <div class="flex items-center justify-between gap-2 mb-3">
+          <div class="flex items-center gap-2.5">
+            <div class="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-md font-black text-lg">
+              🚲
+            </div>
+            <div>
+              <h1 class="text-base font-bold text-slate-900 leading-tight">高雄 YouBike 2.0 即時站點</h1>
+              <p class="text-xs text-slate-500 font-medium">SWP07 OpenStreetMap 串接實作</p>
+            </div>
+          </div>
+          <button id="refreshBtn" title="重新整理資料" class="p-2 text-slate-600 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors border border-slate-200">
+            <svg id="refreshIcon" class="w-5 h-5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+            </svg>
+          </button>
+        </div>
+
+        <!-- 搜尋與行政區篩選 -->
+        <div class="space-y-2">
+          <div class="relative">
+            <input 
+              id="searchInput" 
+              type="text" 
+              placeholder="搜尋站點名稱或路名 (如: 高鐵、中央公園)..." 
+              class="w-full pl-9 pr-8 py-2 text-xs md:text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
+            />
+            <span class="absolute left-3 top-2.5 text-slate-400">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+            </span>
+            <button id="clearSearch" class="hidden absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+          </div>
+
+          <div class="flex gap-2">
+            <select id="districtSelect" class="flex-1 text-xs py-2 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 text-slate-700">
+              <option value="ALL">全部行政區 (高雄市全區)</option>
+            </select>
+            <button id="toggleListBtn" class="px-3 py-2 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl border border-slate-200 font-medium flex items-center gap-1 transition">
+              <span>列表</span>
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"></path></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- 狀態列與圖例統計 -->
+        <div class="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+          <div class="flex items-center gap-1.5" id="dataStatusIndicator">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span id="dataStatusText" class="font-medium">連線載入中...</span>
+          </div>
+          <div id="stationCount" class="font-semibold text-slate-700">共 0 站</div>
+        </div>
+
+        <!-- 圖例說明 -->
+        <div class="mt-2.5 flex items-center justify-between text-[11px] text-slate-600 bg-slate-50 p-2 rounded-lg">
+          <div class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span> 可借 5+ 輛</div>
+          <div class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span> 剩 1~4 輛</div>
+          <div class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block"></span> 目前無車</div>
+        </div>
+      </div>
+    </header>
+
+    <!-- 右側/側邊站點清單抽屜（支援點擊快速定位飛到 Marker） -->
+    <aside id="sideDrawer" class="hidden absolute top-4 right-4 bottom-4 w-80 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-200/80 z-20 flex flex-col overflow-hidden transition-all">
+      <div class="p-3.5 border-b border-slate-100 flex items-center justify-between">
+        <h2 class="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+          <span>站點速覽</span>
+          <span id="drawerCountBadge" class="text-xs bg-slate-100 px-2 py-0.5 rounded-full text-slate-600">0</span>
+        </h2>
+        <button id="closeDrawerBtn" class="p-1 text-slate-400 hover:text-slate-600 rounded-lg">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+      </div>
+      <div id="stationListContainer" class="flex-1 overflow-y-auto p-2 space-y-1.5 divide-y divide-slate-100">
+        <!-- 動態渲染站點項目 -->
+      </div>
+    </aside>
+
+    <!-- 定位至自己位置按鈕 -->
+    <div class="absolute bottom-6 right-6 z-20 flex flex-col gap-2">
+      <button id="locateMeBtn" title="定位我的位置" class="w-11 h-11 bg-white text-slate-700 hover:text-amber-600 hover:bg-slate-50 rounded-full shadow-lg border border-slate-200 flex items-center justify-center transition transform active:scale-95">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+      </button>
+      <button id="resetViewBtn" title="回高雄市中心" class="w-11 h-11 bg-white text-slate-700 hover:text-amber-600 hover:bg-slate-50 rounded-full shadow-lg border border-slate-200 flex items-center justify-center transition transform active:scale-95 font-bold text-xs">
+        高雄
+      </button>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+  <script>
+    // 高雄市中心座標 (經緯度)
+    const KAOHSIUNG_CENTER = [22.6273, 120.3014];
+    const DEFAULT_ZOOM = 13;
+    const API_ENDPOINT = 'https://openapi.kcg.gov.tw/Api/Service/Get/b4dd9c40-9027-4125-8666-06bef1756092';
+
+    // 備用真實站點資料（若在 iframe / 預覽環境中受限於政府網址 CORS 策略時，確保作業立即可完整預覽與互動）
+    const BACKUP_STATIONS = [
+      { sno: "500201001", sna: "YouBike2.0_捷運美麗島站(9號出口)", sarea: "新興區", ar: "中山一路153號", lat: 22.6315, lng: 120.3021, sbi: 14, bemp: 16, tot: 30, mday: "2026-10-08 14:50:00" },
+      { sno: "500201002", sna: "YouBike2.0_中央公園站(1號出口)", sarea: "前金區", ar: "中山一路11號", lat: 22.6253, lng: 120.3005, sbi: 8, bemp: 17, tot: 25, mday: "2026-10-08 14:50:00" },
+      { sno: "500201003", sna: "YouBike2.0_高鐵左營站", sarea: "左營區", ar: "高鐵路107號前", lat: 22.6874, lng: 120.3076, sbi: 22, bemp: 18, tot: 40, mday: "2026-10-08 14:50:00" },
+      { sno: "500201004", sna: "YouBike2.0_駁二藝術特區(大勇路)", sarea: "鹽埕區", ar: "大勇路1號", lat: 22.6201, lng: 120.2818, sbi: 4, bemp: 16, tot: 20, mday: "2026-10-08 14:50:00" },
+      { sno: "500201005", sna: "YouBike2.0_高雄火車站(建國二路)", sarea: "三民區", ar: "建國二路318號", lat: 22.6387, lng: 120.3025, sbi: 0, bemp: 28, tot: 28, mday: "2026-10-08 14:50:00" },
+      { sno: "500201006", sna: "YouBike2.0_高雄流行音樂中心", sarea: "苓雅區", ar: "真愛路1號", lat: 22.6189, lng: 120.2924, sbi: 12, bemp: 8, tot: 20, mday: "2026-10-08 14:50:00" },
+      { sno: "500201007", sna: "YouBike2.0_高雄市立美術館", sarea: "鼓山區", ar: "美術館路80號", lat: 22.6575, lng: 120.2866, sbi: 19, bemp: 11, tot: 30, mday: "2026-10-08 14:50:00" },
+      { sno: "500201008", sna: "YouBike2.0_衛武營國家藝術文化中心", sarea: "鳳山區", ar: "三多一路1號", lat: 22.6238, lng: 120.3429, sbi: 15, bemp: 15, tot: 30, mday: "2026-10-08 14:50:00" },
+      { sno: "500201009", sna: "YouBike2.0_巨蛋站(2號出口)", sarea: "左營區", ar: "博愛二路/裕誠路口", lat: 22.6658, lng: 120.3032, sbi: 2, bemp: 23, tot: 25, mday: "2026-10-08 14:50:00" },
+      { sno: "500201010", sna: "YouBike2.0_蓮池潭風景區", sarea: "左營區", ar: "勝利路/蓮潭路口", lat: 22.6841, lng: 120.2965, sbi: 9, bemp: 11, tot: 20, mday: "2026-10-08 14:50:00" },
+      { sno: "500201011", sna: "YouBike2.0_愛河之心(博愛一路)", sarea: "三民區", ar: "博愛一路/同盟一路口", lat: 22.6508, lng: 120.3045, sbi: 7, bemp: 13, tot: 20, mday: "2026-10-08 14:50:00" },
+      { sno: "500201012", sna: "YouBike2.0_三多商圈站(1號出口)", sarea: "苓雅區", ar: "中山二路/三多三路口", lat: 22.6139, lng: 120.3061, sbi: 1, bemp: 29, tot: 30, mday: "2026-10-08 14:50:00" }
+    ];
+
+    let allStations = [];
+    let filteredStations = [];
+    let stationMarkerMap = new Map();
+
+    // 初始化地圖與圖層
+    const map = L.map('map', {
+      zoomControl: false
+    }).setView(KAOHSIUNG_CENTER, DEFAULT_ZOOM);
+
+    // 將 Zoom Control 移到右下方，避免遮蔽搜尋面板
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+    // 使用 OpenStreetMap 圖資
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> 貢獻者 | 高雄市政府開放資料'
+    }).addTo(map);
+
+    // 建立 Marker 集群群組
+    const clusterGroup = L.markerClusterGroup({
+      chunkedLoading: true,
+      maxClusterRadius: 50,
+      spiderfyOnMaxZoom: true,
+      showCoverageOnHover: false
+    });
+    map.addLayer(clusterGroup);
+
+    const searchInput = document.getElementById('searchInput');
+    const clearSearch = document.getElementById('clearSearch');
+    const districtSelect = document.getElementById('districtSelect');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const refreshIcon = document.getElementById('refreshIcon');
+    const stationCount = document.getElementById('stationCount');
+    const dataStatusText = document.getElementById('dataStatusText');
+    const dataStatusIndicator = document.getElementById('dataStatusIndicator');
+    const sideDrawer = document.getElementById('sideDrawer');
+    const toggleListBtn = document.getElementById('toggleListBtn');
+    const closeDrawerBtn = document.getElementById('closeDrawerBtn');
+    const stationListContainer = document.getElementById('stationListContainer');
+    const drawerCountBadge = document.getElementById('drawerCountBadge');
+    const locateMeBtn = document.getElementById('locateMeBtn');
+    const resetViewBtn = document.getElementById('resetViewBtn');
+
+    // 依據可用車輛數決定顏色
+    function getBikeStatusColor(sbi) {
+      if (sbi <= 0) return { bg: '#f43f5e', border: '#e11d48', label: '無車' }; // 玫瑰紅
+      if (sbi < 5) return { bg: '#f59e0b', border: '#d97706', label: '少量' };  // 琥珀橘
+      return { bg: '#10b981', border: '#059669', label: '充足' };             // 翠綠
+    }
+
+    // 建立自訂圓形 Marker 圖標
+    function createMarkerIcon(sbi) {
+      const color = getBikeStatusColor(sbi);
+      return L.divIcon({
+        className: 'custom-bike-container',
+        html: `
+          <div class="custom-bike-marker" style="background-color: ${color.bg}; width: 32px; height: 32px; font-size: 13px;">
+            ${sbi}
+          </div>
+        `,
+        iconSize: [32, 32],
+        iconAnchor: [16, 16],
+        popupAnchor: [0, -18]
+      });
+    }
+
+    // 建立豐富的資訊 Popup 內容
+    function createPopupContent(station) {
+      const name = station.sna.replace('YouBike2.0_', '');
+      const sbi = station.sbi || 0;
+      const bemp = station.bemp || 0;
+      const tot = station.tot || (sbi + bemp);
+      const percent = tot > 0 ? Math.min(100, Math.round((sbi / tot) * 100)) : 0;
+      const timeStr = station.mday || '即時更新';
+
+      return `
+        <div class="w-64 sm:w-72 overflow-hidden bg-white">
+          <div class="bg-gradient-to-r from-amber-500 to-amber-600 p-3.5 text-white">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] bg-white/20 backdrop-blur-sm px-2 py-0.5 rounded-full font-medium tracking-wide">
+                ${station.sarea || '高雄市'}
+              </span>
+              <span class="text-[11px] opacity-90 font-mono">${timeStr.split(' ')[1] || ''}</span>
+            </div>
+            <h3 class="font-bold text-base mt-1.5 leading-snug drop-shadow-sm">${name}</h3>
+          </div>
+          
+          <div class="p-3.5 space-y-3">
+            <p class="text-xs text-slate-500 flex items-start gap-1">
+              <svg class="w-3.5 h-3.5 text-slate-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg>
+              <span>${station.ar || '無詳細地址紀錄'}</span>
+            </p>
+
+            <!-- 車位狀態數值卡片 -->
+            <div class="grid grid-cols-2 gap-2 text-center">
+              <div class="bg-emerald-50 border border-emerald-200/80 rounded-xl p-2.5">
+                <div class="text-[11px] font-semibold text-emerald-700">可借車輛</div>
+                <div class="text-2xl font-black text-emerald-600 mt-0.5">${sbi}</div>
+              </div>
+              <div class="bg-sky-50 border border-sky-200/80 rounded-xl p-2.5">
+                <div class="text-[11px] font-semibold text-sky-700">可還空位</div>
+                <div class="text-2xl font-black text-sky-600 mt-0.5">${bemp}</div>
+              </div>
+            </div>
+
+            <!-- 可借比率條 -->
+            <div>
+              <div class="flex justify-between text-[11px] text-slate-500 mb-1">
+                <span>車輛充足率</span>
+                <span class="font-bold text-slate-700">${percent}%</span>
+              </div>
+              <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                <div class="h-2 rounded-full transition-all duration-500 ${percent > 30 ? 'bg-emerald-500' : (percent > 0 ? 'bg-amber-500' : 'bg-rose-500')}" style="width: ${percent}%"></div>
+              </div>
+            </div>
+
+            <!-- 導航連結 -->
+            <a href="https://www.google.com/maps/dir/?api=1&destination=${station.lat},${station.lng}" target="_blank" rel="noopener noreferrer" 
+               class="mt-1 block w-full text-center py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition">
+              使用 Google Maps 導航前往 ↗
+            </a>
+          </div>
+        </div>
+      `;
+    }
+
+    async function fetchYouBikeData() {
+      refreshIcon.classList.add('animate-spin');
+      dataStatusText.textContent = '連線載入資料中...';
+
+      let items = null;
+
+      // 嘗試 1：直接讀取高市開放平台 API
+      try {
+        const res = await fetch(API_ENDPOINT, { cache: 'no-store' });
+        if (res.ok) {
+          const json = await res.json();
+          items = parseApiResponse(json);
+        }
+      } catch (e) {
+        console.warn('直接抓取受 CORS 或連線限制，切換代理...');
+      }
+
+      // 嘗試 2：若遇到跨域 CORS 阻擋，自動使用公共代理伺服器
+      if (!items || items.length === 0) {
+        const proxies = [
+          `https://api.allorigins.win/raw?url=${encodeURIComponent(API_ENDPOINT)}`,
+          `https://corsproxy.io/?${encodeURIComponent(API_ENDPOINT)}`
+        ];
+
+        for (const proxyUrl of proxies) {
+          try {
+            const res = await fetch(proxyUrl);
+            if (res.ok) {
+              const json = await res.json();
+              items = parseApiResponse(json);
+              if (items && items.length > 0) break;
+            }
+          } catch (err) {
+            console.warn('代理嘗試失敗，嘗試下一個...');
+          }
+        }
+      }
+
+      // 嘗試 3：若外部網路全數受阻（例如無外網或政府 API 維護中），套用真實範本備援資料確保頁面正常運行
+      if (!items || items.length === 0) {
+        console.info('使用備援示範資料集');
+        items = BACKUP_STATIONS;
+        dataStatusIndicator.firstElementChild.className = 'w-2 h-2 rounded-full bg-amber-500';
+        dataStatusText.textContent = '已載入備援點位 (離線模式)';
+      } else {
+        dataStatusIndicator.firstElementChild.className = 'w-2 h-2 rounded-full bg-emerald-500';
+        dataStatusText.textContent = '即時連線成功';
+      }
+
+      refreshIcon.classList.remove('animate-spin');
+      processStationData(items);
+    }
+
+    // 解析不同的 API 回傳結構 (array / retVal / dataList)
+    function parseApiResponse(json) {
+      if (!json) return null;
+      if (Array.isArray(json)) return json;
+      if (json.data && Array.isArray(json.data.retVal)) return json.data.retVal;
+      if (json.data && Array.isArray(json.data)) return json.data;
+      if (Array.isArray(json.retVal)) return json.retVal;
+      if (Array.isArray(json.dataList)) return json.dataList;
+      return null;
+    }
+
+    function processStationData(items) {
+      allStations = [];
+      const districtSet = new Set();
+
+      items.forEach(item => {
+        const lat = parseFloat(item.lat || item.Lat || item.latitude);
+        const lng = parseFloat(item.lng || item.Lng || item.longitude);
+        const sbi = parseInt(item.sbi ?? item.available_bikes ?? 0, 10);
+        const bemp = parseInt(item.bemp ?? item.empty_spaces ?? 0, 10);
+        const tot = parseInt(item.tot ?? item.total_spaces ?? (sbi + bemp), 10);
+        const sarea = (item.sarea || item.area || '其他區').trim();
+
+        if (!isNaN(lat) && !isNaN(lng) && lat > 20 && lat < 26) {
+          allStations.push({
+            sno: item.sno || Math.random().toString(),
+            sna: item.sna || item.name || 'YouBike2.0 站點',
+            sarea: sarea,
+            ar: item.ar || item.address || '',
+            lat: lat,
+            lng: lng,
+            sbi: isNaN(sbi) ? 0 : sbi,
+            bemp: isNaN(bemp) ? 0 : bemp,
+            tot: isNaN(tot) ? 0 : tot,
+            mday: item.mday || ''
+          });
+          if (sarea) districtSet.add(sarea);
+        }
+      });
+
+      // 動態更新行政區下拉選單
+      const currentSelectedDist = districtSelect.value;
+      districtSelect.innerHTML = '<option value="ALL">全部行政區 (高雄市全區)</option>';
+      Array.from(districtSet).sort().forEach(dist => {
+        const opt = document.createElement('option');
+        opt.value = dist;
+        opt.textContent = `${dist}`;
+        districtSelect.appendChild(opt);
+      });
+      if (districtSet.has(currentSelectedDist)) {
+        districtSelect.value = currentSelectedDist;
+      }
+
+      applyFilters();
+    }
+
+    function applyFilters() {
+      const query = searchInput.value.trim().toLowerCase();
+      const dist = districtSelect.value;
+
+      filteredStations = allStations.filter(st => {
+        const matchDist = (dist === 'ALL' || st.sarea === dist);
+        const matchQuery = !query || 
+          st.sna.toLowerCase().includes(query) || 
+          st.ar.toLowerCase().includes(query);
+        return matchDist && matchQuery;
+      });
+
+      renderMarkers(filteredStations);
+      renderDrawerList(filteredStations);
+
+      stationCount.textContent = `顯示 ${filteredStations.length} / ${allStations.length} 站`;
+      drawerCountBadge.textContent = `${filteredStations.length}`;
+      clearSearch.classList.toggle('hidden', query.length === 0);
+    }
+
+    // 重新在地圖上渲染 Markers
+    function renderMarkers(stations) {
+      clusterGroup.clearLayers();
+      stationMarkerMap.clear();
+
+      stations.forEach(st => {
+        const marker = L.marker([st.lat, st.lng], {
+          icon: createMarkerIcon(st.sbi),
+          title: st.sna
+        }).bindPopup(createPopupContent(st));
+
+        clusterGroup.addLayer(marker);
+        stationMarkerMap.set(st.sno, marker);
+      });
+
+      // 若有篩選結果且無聚焦，自適應邊界
+      if (stations.length > 0 && searchInput.value.trim()) {
+        const bounds = clusterGroup.getBounds();
+        if (bounds.isValid()) {
+          map.fitBounds(bounds, { padding: [60, 60], maxZoom: 16 });
+        }
+      }
+    }
+
+    function renderDrawerList(stations) {
+      stationListContainer.innerHTML = '';
+      if (stations.length === 0) {
+        stationListContainer.innerHTML = `
+          <div class="text-center py-8 text-slate-400 text-xs">
+            查無相符站點資料
+          </div>
+        `;
+        return;
+      }
+
+      // 取前 80 站避免長列表卡頓
+      const displayStations = stations.slice(0, 80);
+      displayStations.forEach(st => {
+        const color = getBikeStatusColor(st.sbi);
+        const name = st.sna.replace('YouBike2.0_', '');
+
+        const itemEl = document.createElement('div');
+        itemEl.className = 'p-2.5 rounded-xl hover:bg-slate-50 cursor-pointer transition flex items-center justify-between group';
+        itemEl.innerHTML = `
+          <div class="truncate pr-2">
+            <div class="text-xs font-bold text-slate-800 group-hover:text-amber-600 truncate">${name}</div>
+            <div class="text-[11px] text-slate-400 truncate">${st.sarea} · ${st.ar || '無詳細地址'}</div>
+          </div>
+          <div class="shrink-0 text-right">
+            <span class="inline-block px-2 py-0.5 text-xs font-bold rounded-lg text-white" style="background-color: ${color.bg}">
+              ${st.sbi} 輛
+            </span>
+          </div>
+        `;
+
+        itemEl.addEventListener('click', () => {
+          flyToStation(st.sno, st.lat, st.lng);
+        });
+
+        stationListContainer.appendChild(itemEl);
+      });
+    }
+
+    // 平滑飛至指定點位並開啟 Popup
+    function flyToStation(sno, lat, lng) {
+      map.flyTo([lat, lng], 17, { duration: 1.2 });
+      setTimeout(() => {
+        const marker = stationMarkerMap.get(sno);
+        if (marker) {
+          clusterGroup.zoomToShowLayer(marker, () => {
+            marker.openPopup();
+          });
+        }
+      }, 1000);
+    }
+
+    searchInput.addEventListener('input', applyFilters);
+    clearSearch.addEventListener('click', () => {
+      searchInput.value = '';
+      applyFilters();
+      searchInput.focus();
+    });
+
+    districtSelect.addEventListener('change', applyFilters);
+
+    refreshBtn.addEventListener('click', () => {
+      fetchYouBikeData();
+    });
+
+    toggleListBtn.addEventListener('click', () => {
+      sideDrawer.classList.toggle('hidden');
+    });
+
+    closeDrawerBtn.addEventListener('click', () => {
+      sideDrawer.classList.add('hidden');
+    });
+
+    resetViewBtn.addEventListener('click', () => {
+      map.flyTo(KAOHSIUNG_CENTER, DEFAULT_ZOOM);
+    });
+
+    // 定位使用者當前位置
+    locateMeBtn.addEventListener('click', () => {
+      if (!navigator.geolocation) {
+        alert('您的瀏覽器不支援地理定位功能');
+        return;
+      }
+      locateMeBtn.classList.add('animate-pulse');
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          locateMeBtn.classList.remove('animate-pulse');
+          const userLat = pos.coords.latitude;
+          const userLng = pos.coords.longitude;
+          map.flyTo([userLat, userLng], 16);
+
+          L.circleMarker([userLat, userLng], {
+            radius: 8,
+            fillColor: '#3b82f6',
+            color: '#ffffff',
+            weight: 3,
+            opacity: 1,
+            fillOpacity: 0.9
+          }).addTo(map).bindPopup('<b>您的目前位置</b>').openPopup();
+        },
+        err => {
+          locateMeBtn.classList.remove('animate-pulse');
+          console.warn('定位失敗或未授權:', err.message);
+        },
+        { enableHighAccuracy: true, timeout: 6000 }
+      );
+    });
+
+    window.addEventListener('DOMContentLoaded', () => {
+      fetchYouBikeData();
+    });
+  </script>
+</body>
+</html>
